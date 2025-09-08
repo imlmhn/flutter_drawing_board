@@ -1,4 +1,7 @@
+// drawing_board.dart
+
 import 'dart:math';
+import 'dart:ui' as ui; // ClipPath를 위해 추가
 
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
@@ -14,11 +17,26 @@ import 'paint_contents/smooth_line.dart';
 import 'paint_contents/straight_line.dart';
 import 'painter.dart';
 
+/// 전달받은 Path로 영역을 클리핑하는 CustomClipper
+class _MaskClipper extends CustomClipper<Path> {
+  final Path path;
+
+  const _MaskClipper(this.path);
+
+  @override
+  Path getClip(Size size) => path;
+
+  @override
+  bool shouldReclip(covariant CustomClipper<Path> oldClipper) {
+    return oldClipper is! _MaskClipper || oldClipper.path != path;
+  }
+}
+
 /// 默认工具栏构建器
 typedef DefaultToolsBuilder = List<DefToolItem> Function(
-  Type currType,
-  DrawingController controller,
-);
+    Type currType,
+    DrawingController controller,
+    );
 
 /// 画板
 class DrawingBoard extends StatefulWidget {
@@ -47,7 +65,11 @@ class DrawingBoard extends StatefulWidget {
     this.onInteractionUpdate,
     this.transformationController,
     this.alignment = Alignment.topCenter,
+    this.clipPath, // 클리핑 경로 속성 추가
   });
+
+  /// 클리핑할 Path. 이 Path 내부에서만 드로잉 가능
+  final Path? clipPath; // 클리핑 경로 속성 추가
 
   /// 画板背景控件
   final Widget background;
@@ -62,13 +84,13 @@ class DrawingBoard extends StatefulWidget {
   final bool showDefaultTools;
 
   /// 开始拖动
-  final void Function(PointerDownEvent pde)? onPointerDown;
+  final Function(PointerDownEvent pde)? onPointerDown;
 
   /// 正在拖动
-  final void Function(PointerMoveEvent pme)? onPointerMove;
+  final Function(PointerMoveEvent pme)? onPointerMove;
 
   /// 结束拖动
-  final void Function(PointerUpEvent pue)? onPointerUp;
+  final Function(PointerUpEvent pue)? onPointerUp;
 
   /// 边缘裁剪方式
   final Clip clipBehavior;
@@ -93,7 +115,8 @@ class DrawingBoard extends StatefulWidget {
   final AlignmentGeometry alignment;
 
   /// 默认工具项列表
-  static List<DefToolItem> defaultTools(Type currType, DrawingController controller) {
+  static List<DefToolItem> defaultTools(
+      Type currType, DrawingController controller) {
     return <DefToolItem>[
       DefToolItem(
           isActive: currType == SimpleLine,
@@ -137,7 +160,8 @@ class DrawingBoard extends StatefulWidget {
 }
 
 class _DrawingBoardState extends State<DrawingBoard> {
-  late final DrawingController _controller = widget.controller ?? DrawingController();
+  late final DrawingController _controller =
+      widget.controller ?? DrawingController();
 
   @override
   void dispose() {
@@ -152,8 +176,8 @@ class _DrawingBoardState extends State<DrawingBoard> {
     Widget content = InteractiveViewer(
       maxScale: widget.maxScale,
       minScale: widget.minScale,
-      boundaryMargin:
-          widget.boardBoundaryMargin ?? EdgeInsets.all(MediaQuery.of(context).size.width),
+      boundaryMargin: widget.boardBoundaryMargin ??
+          EdgeInsets.all(MediaQuery.of(context).size.width),
       clipBehavior: widget.boardClipBehavior,
       panAxis: widget.panAxis,
       constrained: widget.boardConstrained,
@@ -173,15 +197,19 @@ class _DrawingBoardState extends State<DrawingBoard> {
           Expanded(child: content),
           if (widget.showDefaultActions) buildDefaultActions(_controller),
           if (widget.showDefaultTools)
-            buildDefaultTools(_controller, defaultToolsBuilder: widget.defaultToolsBuilder),
+            buildDefaultTools(_controller,
+                defaultToolsBuilder: widget.defaultToolsBuilder),
         ],
       );
     }
 
     return Listener(
-      onPointerDown: (PointerDownEvent pde) => _controller.addFingerCount(pde.localPosition),
-      onPointerUp: (PointerUpEvent pue) => _controller.reduceFingerCount(pue.localPosition),
-      onPointerCancel: (PointerCancelEvent pce) => _controller.reduceFingerCount(pce.localPosition),
+      onPointerDown: (PointerDownEvent pde) =>
+          _controller.addFingerCount(pde.localPosition),
+      onPointerUp: (PointerUpEvent pue) =>
+          _controller.reduceFingerCount(pue.localPosition),
+      onPointerCancel: (PointerCancelEvent pce) =>
+          _controller.reduceFingerCount(pce.localPosition),
       child: content,
     );
   }
@@ -190,7 +218,8 @@ class _DrawingBoardState extends State<DrawingBoard> {
   Widget get _buildBoard {
     return ExValueBuilder<DrawConfig>(
       valueListenable: _controller.drawConfig,
-      shouldRebuild: (DrawConfig p, DrawConfig n) => p.angle != n.angle || p.size != n.size,
+      shouldRebuild: (DrawConfig p, DrawConfig n) =>
+      p.angle != n.angle || p.size != n.size,
       builder: (_, DrawConfig dc, Widget? child) {
         Widget c = child!;
 
@@ -210,7 +239,16 @@ class _DrawingBoardState extends State<DrawingBoard> {
           key: _controller.painterKey,
           child: Stack(
             alignment: Alignment.center,
-            children: <Widget>[_buildImage, _buildPainter],
+            children: <Widget>[
+              _buildImage,
+              // Painter 영역에만 조건부로 ClipPath 적용
+              widget.clipPath != null
+                  ? ClipPath(
+                clipper: _MaskClipper(widget.clipPath!),
+                child: _buildPainter,
+              )
+                  : _buildPainter,
+            ],
           ),
         ),
       ),
@@ -219,9 +257,9 @@ class _DrawingBoardState extends State<DrawingBoard> {
 
   /// 构建背景
   Widget get _buildImage => GetSize(
-        onChange: (Size? size) => _controller.setBoardSize(size),
-        child: widget.background,
-      );
+    onChange: (Size? size) => _controller.setBoardSize(size),
+    child: widget.background,
+  );
 
   /// 构建绘制层
   Widget get _buildPainter {
@@ -263,7 +301,8 @@ class _DrawingBoardState extends State<DrawingBoard> {
                       value: dc.strokeWidth,
                       max: 50,
                       min: 1,
-                      onChanged: (double v) => controller.setStyle(strokeWidth: v),
+                      onChanged: (double v) =>
+                          controller.setStyle(strokeWidth: v),
                     ),
                   ),
                   IconButton(
@@ -296,10 +335,10 @@ class _DrawingBoardState extends State<DrawingBoard> {
 
   /// 构建默认工具栏
   static Widget buildDefaultTools(
-    DrawingController controller, {
-    DefaultToolsBuilder? defaultToolsBuilder,
-    Axis axis = Axis.horizontal,
-  }) {
+      DrawingController controller, {
+        DefaultToolsBuilder? defaultToolsBuilder,
+        Axis axis = Axis.horizontal,
+      }) {
     return Material(
       color: Colors.white,
       child: SingleChildScrollView(
@@ -307,16 +346,20 @@ class _DrawingBoardState extends State<DrawingBoard> {
         padding: EdgeInsets.zero,
         child: ExValueBuilder<DrawConfig>(
           valueListenable: controller.drawConfig,
-          shouldRebuild: (DrawConfig p, DrawConfig n) => p.contentType != n.contentType,
+          shouldRebuild: (DrawConfig p, DrawConfig n) =>
+          p.contentType != n.contentType,
           builder: (_, DrawConfig dc, ___) {
             final Type currType = dc.contentType;
 
-            final List<Widget> children = (defaultToolsBuilder?.call(currType, controller) ??
-                    DrawingBoard.defaultTools(currType, controller))
+            final List<Widget> children =
+            (defaultToolsBuilder?.call(currType, controller) ??
+                DrawingBoard.defaultTools(currType, controller))
                 .map((DefToolItem item) => _DefToolItemWidget(item: item))
                 .toList();
 
-            return axis == Axis.horizontal ? Row(children: children) : Column(children: children);
+            return axis == Axis.horizontal
+                ? Row(children: children)
+                : Column(children: children);
           },
         ),
       ),
@@ -335,7 +378,7 @@ class DefToolItem {
     this.iconSize,
   });
 
-  final void Function()? onTap;
+  final Function()? onTap;
   final bool isActive;
 
   final IconData icon;
